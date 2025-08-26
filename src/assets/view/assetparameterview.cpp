@@ -33,7 +33,6 @@ AssetParameterView::AssetParameterView(QWidget *parent)
     m_lay->setContentsMargins(0, 0, 0, 2);
     m_lay->setVerticalSpacing(2);
     m_lay->setHorizontalSpacing(m_lay->horizontalSpacing() * 3);
-    setFont(QFontDatabase::systemFont(QFontDatabase::SmallestReadableFont));
     // Presets Combo
     m_presetMenu = new QMenu(this);
 }
@@ -83,7 +82,7 @@ void AssetParameterView::setModel(const std::shared_ptr<AssetParameterModel> &mo
     for (int i = 0; i < model->rowCount(); ++i) {
         QModelIndex index = model->index(i, 0);
         auto type = model->data(index, AssetParameterModel::TypeRole).value<ParamType>();
-        if (!m_mainKeyframeWidget && (AssetParameterModel::isAnimated(type) || type == ParamType::Geometry)) {
+        if (!m_mainKeyframeWidget && AssetParameterModel::isAnimated(type)) {
             auto paramWidgets = AbstractParamWidget::construct(model, index, frameSize, this, m_lay);
             if (paramWidgets.second) {
                 m_mainKeyframeWidget = paramWidgets.second;
@@ -108,7 +107,7 @@ void AssetParameterView::setModel(const std::shared_ptr<AssetParameterModel> &mo
     for (int i = 0; i < model->rowCount(); ++i) {
         QModelIndex index = model->index(i, 0);
         auto type = model->data(index, AssetParameterModel::TypeRole).value<ParamType>();
-        if (m_mainKeyframeWidget && (AssetParameterModel::isAnimated(type) || type == ParamType::Geometry)) {
+        if (m_mainKeyframeWidget && (AssetParameterModel::isAnimated(type))) {
             if (type != ParamType::ColorWheel) {
                 m_mainKeyframeWidget->addParameter(index);
             }

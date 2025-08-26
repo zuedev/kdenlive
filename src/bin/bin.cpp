@@ -685,7 +685,7 @@ MyListView::MyListView(QWidget *parent)
 void MyListView::focusInEvent(QFocusEvent *event)
 {
     QListView::focusInEvent(event);
-    if (event->reason() == Qt::MouseFocusReason) {
+    if (event->reason() == Qt::MouseFocusReason || event->reason() == Qt::ActiveWindowFocusReason) {
         Q_EMIT focusView();
     }
 }
@@ -866,7 +866,7 @@ void MyTreeView::mouseReleaseEvent(QMouseEvent *event)
 void MyTreeView::focusInEvent(QFocusEvent *event)
 {
     QTreeView::focusInEvent(event);
-    if (event->reason() == Qt::MouseFocusReason) {
+    if (event->reason() == Qt::MouseFocusReason || event->reason() == Qt::ActiveWindowFocusReason) {
         Q_EMIT focusView();
     }
 }
@@ -1384,7 +1384,7 @@ Bin::Bin(std::shared_ptr<ProjectItemModel> model, QWidget *parent, bool isMainBi
             m_proxyModel->slotClearSearchFilters();
             return;
         }
-        slotApplyFilters();
+        slotApplyFilters(true);
     });
 
     connect(m_filterMenu, &QMenu::triggered, this, [this](QAction *action) {
@@ -1400,7 +1400,7 @@ Bin::Bin(std::shared_ptr<ProjectItemModel> model, QWidget *parent, bool isMainBi
             m_filterButton->setChecked(false);
             return;
         }
-        slotApplyFilters();
+        slotApplyFilters(false);
     });
 
     m_tagAction->setCheckable(true);
@@ -1936,6 +1936,8 @@ void Bin::replaceSingleClip(const QString clipId, const QString &newUrl)
                         return;
                         ;
                     }
+                    // Ensure all instances use a correct duration
+                    currentItem->limitMaxDuration(replacementDuration - 1);
                 }
             } else {
                 KMessageBox::error(this, i18n("The selected file %1 is invalid.", newUrl));
@@ -2156,6 +2158,8 @@ void Bin::slotReplaceClip()
                                          (currentDuration - replacementDuration))) != KMessageBox::Continue) {
                                 continue;
                             }
+                            // Ensure all instances use a correct duration
+                            currentItem->limitMaxDuration(replacementDuration - 1);
                         }
                     } else {
                         KMessageBox::error(this, i18n("The selected file %1 is invalid.", fileName));
@@ -2513,7 +2517,7 @@ void Bin::rebuildFilters(int tagsCount)
     typeMenu->addAction(typeFilter);
 }
 
-void Bin::slotApplyFilters()
+void Bin::slotApplyFilters(bool fromFilterButton)
 {
     QList<QAction *> list = m_filterMenu->actions();
     QList<int> rateFilters;
@@ -2543,6 +2547,9 @@ void Bin::slotApplyFilters()
     if (!rateFilters.isEmpty() || !tagFilters.isEmpty() || !typeFilters.isEmpty() || usageFilter != ProjectSortProxyModel::All) {
         m_filterButton->setChecked(true);
     } else {
+        if (fromFilterButton) {
+            doDisplayMessage(i18n("Select an option in the menu to enable filtering"), KMessageWidget::Information, {}, false, BinMessage::TimedMessage);
+        }
         m_filterButton->setChecked(false);
     }
     m_proxyModel->slotSetFilters(tagFilters, rateFilters, typeFilters, usageFilter);
@@ -2969,7 +2976,6 @@ void Bin::slotInitView(QAction *action)
         break;
     }
     default: {
-        new MyTreeView(this);
         auto *tv = new MyTreeView(this);
         m_itemView = tv;
         m_binTreeViewDelegate = new BinItemDelegate(this);

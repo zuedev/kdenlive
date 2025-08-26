@@ -23,7 +23,9 @@ constexpr int MINIMUM_SECONDARY_AXIS_LENGTH = 3;   // minimum height/width for a
 constexpr int MAXIMUM_SECONDARY_AXIS_LENGTH = 7;   // maximum height/width for audio level channels
 constexpr int MARGIN_BETWEEN_LABEL_AND_LEVELS = 4; // px between decibels scale labels and audio levels
 constexpr int TICK_MARK_LENGTH = 2;                // px for tick mark
-constexpr int NO_AUDIO_DB = -100;
+constexpr int SPACE_FOR_CLIPPING_INDICATOR = 9; // Size of the clipping indicator + space between it and the levels (6px + 4px = 10px, see AudioLevelRenderer)
+constexpr double MIN_DISPLAY_DB = -100.0;          // Minimum displayable audio level, used to hide decayed peaks and no audio audio levels
+constexpr double CLIPPING_THRESHOLD_DB = 0.0;      // Maximum displayable audio level
 constexpr int NO_AUDIO_PRIMARY_AXIS_POSITION = -1;
 
 /**
@@ -31,9 +33,10 @@ constexpr int NO_AUDIO_PRIMARY_AXIS_POSITION = -1;
  * @param parent
  * @param orientation Qt::Vertical or Qt::Horizontal
  * @param tickLabelsMode TickLabelsMode for drawing tick marks and labels
+ * @param showClippingIndicator Whether to show clipping indicators
  * @param backgroundColor Optional color for channel background, defaults to Window color
  */
-AudioLevelWidget::AudioLevelWidget(QWidget *parent, Qt::Orientation orientation, AudioLevel::TickLabelsMode tickLabelsMode)
+AudioLevelWidget::AudioLevelWidget(QWidget *parent, Qt::Orientation orientation, AudioLevel::TickLabelsMode tickLabelsMode, bool showClippingIndicator)
     : QWidget(parent)
     , audioChannels(pCore->audioChannels())
     , m_displayToolTip(false)
@@ -53,6 +56,7 @@ AudioLevelWidget::AudioLevelWidget(QWidget *parent, Qt::Orientation orientation,
     , m_cachedSecondaryAxisLength(0)
     , m_axisDimensionsNeedUpdate(true)
     , m_renderer(new AudioLevelRenderer(this))
+    , m_showClippingIndicator(showClippingIndicator)
 {
     QFont ft(QFontDatabase::systemFont(QFontDatabase::SmallestReadableFont));
     ft.setPointSizeF(ft.pointSize() * 0.6);
@@ -128,6 +132,10 @@ void AudioLevelWidget::paintEvent(QPaintEvent * /*pe*/)
 
     AudioLevelRenderer::RenderData renderData = createRenderData();
     m_renderer->drawChannelLevels(p, renderData);
+
+    if (m_showClippingIndicator) {
+        m_renderer->drawClippingIndicators(p, renderData);
+    }
 
     // Draw cached channel borders on top
     p.drawPixmap(0, 0, m_bordersCache);
@@ -278,7 +286,14 @@ void AudioLevelWidget::drawBackground()
 // cppcheck-suppress unusedFunction
 void AudioLevelWidget::setAudioValues(const QVector<double> &values)
 {
-    m_valueDecibels = values;
+    // Clamp all incoming audio values to reasonable bounds that we can visualize
+    m_valueDecibels.clear();
+    m_valueDecibels.reserve(values.size());
+    for (double value : values) {
+        double clampedValue = qBound(MIN_DISPLAY_DB, value, CLIPPING_THRESHOLD_DB);
+        m_valueDecibels.append(clampedValue);
+    }
+
     bool channelCountChanged = m_valueDecibels.size() != audioChannels;
     bool peaksInitialized = m_peakDecibels.size() != m_valueDecibels.size();
 
@@ -287,22 +302,99 @@ void AudioLevelWidget::setAudioValues(const QVector<double> &values)
         m_axisDimensionsNeedUpdate = true;
         updateLayoutAndSizing();
     }
+
+    // Initialize clipping states and frame counters if needed
+    if (m_showClippingIndicator && (channelCountChanged || m_clippingStates.size() != audioChannels)) {
+        m_clippingStates.resize(audioChannels);
+        m_clippingFrameCounters.resize(audioChannels);
+        for (int i = 0; i < audioChannels; i++) {
+            m_clippingStates[i] = false;
+            m_clippingFrameCounters[i] = 0;
+        }
+    }
+
     if (peaksInitialized) {
-        m_peakDecibels = values;
+        m_peakDecibels = m_valueDecibels;
     }
 
     if (peaksInitialized || channelCountChanged) {
         drawBackground();
     } else {
+        // Peak decay logic: peaks slowly decay over time to make the peak naturally fade out
+        // Each time new values arrive, existing peaks decay by 0.2 dB
+        // If current level is higher than decaying peak, peak is updated to current level
+        // This creates a "hold" effect that makes it easier to see brief loud moments.
         for (int i = 0; i < m_valueDecibels.size(); i++) {
             m_peakDecibels[i] -= .2;
             if (m_valueDecibels.at(i) > m_peakDecibels.at(i)) {
                 m_peakDecibels[i] = m_valueDecibels.at(i);
             }
+            // Clamp peaks to minimum level when fully decayed
+            if (m_peakDecibels[i] < MIN_DISPLAY_DB) {
+                m_peakDecibels[i] = MIN_DISPLAY_DB;
+            }
         }
     }
+
+    if (m_showClippingIndicator) {
+        updateClippingStates();
+    }
+
     updatePrimaryAxisPositions();
     update();
+}
+
+void AudioLevelWidget::reset()
+{
+    // Reset levels
+    for (int i = 0; i < m_valueDecibels.size(); i++) {
+        m_valueDecibels[i] = MIN_DISPLAY_DB;
+    }
+
+    // Reset clipping indicators
+    if (m_showClippingIndicator) {
+        for (int i = 0; i < audioChannels; i++) {
+            m_clippingStates[i] = false;
+            m_clippingFrameCounters[i] = 0;
+        }
+    }
+
+    // Reset peaks
+    for (int i = 0; i < m_peakDecibels.size(); i++) {
+        m_peakDecibels[i] = MIN_DISPLAY_DB;
+    }
+
+    updatePrimaryAxisPositions();
+    update();
+}
+
+void AudioLevelWidget::updateClippingStates()
+{
+    if (!m_showClippingIndicator || m_clippingStates.size() != audioChannels) {
+        return;
+    }
+
+    // Calculate frame count for 4-second decay based on current project frame rate
+    const double currentFps = pCore->getCurrentFps();
+    const int clippingDecayFrames = static_cast<int>(currentFps * 4.0);
+
+    // Clipping decay logic: clipping indicators persist for a fixed time period
+    // to make brief clipping events visible even if they occur between updates
+    for (int i = 0; i < audioChannels; i++) {
+        bool isClipping = m_valueDecibels.at(i) >= CLIPPING_THRESHOLD_DB;
+
+        if (isClipping) {
+            // Start or restart the frame counter when clipping is detected
+            m_clippingStates[i] = true;
+            m_clippingFrameCounters[i] = 0; // Reset frame counter
+        } else if (m_clippingStates[i]) {
+            // Increment frame counter and check if decay period has expired
+            m_clippingFrameCounters[i]++;
+            if (m_clippingFrameCounters[i] >= clippingDecayFrames) {
+                m_clippingStates[i] = false;
+            }
+        }
+    }
 }
 
 void AudioLevelWidget::updateToolTip()
@@ -324,7 +416,7 @@ void AudioLevelWidget::updateToolTip()
         }
 
         // Add value or "No audio"
-        if (m_valueDecibels.at(i) == NO_AUDIO_DB) {
+        if (m_valueDecibels.at(i) <= MIN_DISPLAY_DB) {
             tip.append(i18n("No audio"));
         } else {
             // Format the number with 2 digits before decimal point and 2 after
@@ -369,13 +461,19 @@ void AudioLevelWidget::updatePrimaryAxisPositions()
     m_valuePrimaryAxisPositions.resize(channels);
     m_peakPrimaryAxisPositions.resize(channels);
     for (int i = 0; i < channels; i++) {
-        if (m_valueDecibels.at(i) == NO_AUDIO_DB || m_peakDecibels.at(i) == NO_AUDIO_DB || m_valueDecibels.at(i) >= 100) {
+        // Hide current level position if below display threshold
+        if (m_valueDecibels.at(i) <= MIN_DISPLAY_DB) {
             m_valuePrimaryAxisPositions[i] = NO_AUDIO_PRIMARY_AXIS_POSITION;
-            m_peakPrimaryAxisPositions[i] = NO_AUDIO_PRIMARY_AXIS_POSITION;
-            continue;
+        } else {
+            m_valuePrimaryAxisPositions[i] = AudioLevelRenderer::dBToPrimaryOffset(m_valueDecibels.at(i), m_maxDb, m_cachedPrimaryAxisLength, m_orientation);
         }
-        m_valuePrimaryAxisPositions[i] = AudioLevelRenderer::dBToPrimaryOffset(m_valueDecibels.at(i), m_maxDb, m_cachedPrimaryAxisLength, m_orientation);
-        m_peakPrimaryAxisPositions[i] = AudioLevelRenderer::dBToPrimaryOffset(m_peakDecibels.at(i), m_maxDb, m_cachedPrimaryAxisLength, m_orientation);
+
+        // Hide peak position if below display threshold
+        if (m_peakDecibels.at(i) <= MIN_DISPLAY_DB) {
+            m_peakPrimaryAxisPositions[i] = NO_AUDIO_PRIMARY_AXIS_POSITION;
+        } else {
+            m_peakPrimaryAxisPositions[i] = AudioLevelRenderer::dBToPrimaryOffset(m_peakDecibels.at(i), m_maxDb, m_cachedPrimaryAxisLength, m_orientation);
+        }
     }
 }
 
@@ -433,7 +531,19 @@ void AudioLevelWidget::updateAxisLengths()
         return;
     }
 
-    m_cachedPrimaryAxisLength = AudioLevelRenderer::calculatePrimaryAxisLength(size(), m_orientation, AudioLevelConfig::instance().drawBlockLines());
+    // Calculate available size for audio levels, accounting for clipping indicators
+    QSize availableSize = size();
+    if (m_showClippingIndicator) {
+        if (m_orientation == Qt::Horizontal) {
+            // Reserve space on the right for clipping indicators
+            availableSize.setWidth(availableSize.width() - SPACE_FOR_CLIPPING_INDICATOR);
+        } else {
+            // Reserve space at the top for clipping indicators
+            availableSize.setHeight(availableSize.height() - SPACE_FOR_CLIPPING_INDICATOR);
+        }
+    }
+
+    m_cachedPrimaryAxisLength = AudioLevelRenderer::calculatePrimaryAxisLength(availableSize, m_orientation, AudioLevelConfig::instance().drawBlockLines());
 
     // Use layout state to calculate secondary axis length
     AudioLevelLayoutState layoutState(createLayoutConfig());
@@ -469,5 +579,8 @@ AudioLevelRenderer::RenderData AudioLevelWidget::createRenderData() const
     renderData.fontMetrics = fontMetrics();
     renderData.primaryAxisLength = m_cachedPrimaryAxisLength;
     renderData.secondaryAxisLength = m_cachedSecondaryAxisLength;
+    renderData.showClippingIndicator = m_showClippingIndicator;
+    renderData.clippingStates = m_clippingStates;
+
     return renderData;
 }

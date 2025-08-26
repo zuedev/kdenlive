@@ -24,7 +24,7 @@ class AudioLevelWidget : public QWidget
     Q_OBJECT
 public:
     explicit AudioLevelWidget(QWidget *parent = nullptr, Qt::Orientation orientation = Qt::Vertical,
-                              AudioLevel::TickLabelsMode tickLabelsMode = AudioLevel::TickLabelsMode::Show);
+                              AudioLevel::TickLabelsMode tickLabelsMode = AudioLevel::TickLabelsMode::Show, bool showClippingIndicator = false);
     ~AudioLevelWidget() override;
     void refreshPixmap();
     int audioChannels;
@@ -69,6 +69,11 @@ private:
     bool m_axisDimensionsNeedUpdate = true;
     AudioLevelRenderer *m_renderer;
 
+    // Clipping indicator support
+    bool m_showClippingIndicator;
+    QVector<bool> m_clippingStates;
+    QVector<int> m_clippingFrameCounters;
+
     void drawBackground();
     void setupContextMenu();
     void updateContextMenu();
@@ -77,10 +82,13 @@ private:
     void updateLayoutAndSizing();
     void updatePrimaryAxisPositions();
     void updateAxisLengths();
+    void updateClippingStates();
 
     AudioLevelLayoutState::Config createLayoutConfig() const;
     AudioLevelRenderer::RenderData createRenderData() const;
 
 public Q_SLOTS:
     void setAudioValues(const QVector<double> &values);
+    /** @brief force reset of all audio levels and clipping and peak indicators */
+    void reset();
 };

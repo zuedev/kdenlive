@@ -149,6 +149,10 @@ Monitor::Monitor(Kdenlive::MonitorId id, MonitorManager *manager, QWidget *paren
 #elif defined(Q_OS_MACOS)
     m_glMonitor = new MetalVideoWidget(id, this);
 #else
+    if (QQuickWindow::graphicsApi() == QSGRendererInterface::Vulkan) {
+        qWarning() << "::: Detected QML VULKAN backend, switching to OpenGL...";
+        QQuickWindow::setGraphicsApi(QSGRendererInterface::OpenGL);
+    }
     m_glMonitor = new OpenGLVideoWidget(id, this);
 #endif
     //  The m_glMonitor quickWindow() can be destroyed on undock with some graphics interface (Windows/Mac), so reconnect on destroy
@@ -2319,7 +2323,7 @@ void Monitor::slotShowEffectScene(MonitorSceneType sceneType, bool temporary, co
     loadQmlScene(sceneType, sceneData);
 }
 
-void Monitor::setUpEffectGeometry(const QRect &r, const QVariantList &list, const QVariantList &types, const QVariantList &keyframes, const QRect &box)
+void Monitor::setUpEffectGeometry(const QVariantList &list, const QVariantList &types, const QVariantList &keyframes, const QRect &box)
 {
     QQuickItem *root = m_glMonitor->rootObject();
     if (!root) {
@@ -2337,14 +2341,16 @@ void Monitor::setUpEffectGeometry(const QRect &r, const QVariantList &list, cons
     } else if (!list.isEmpty() || m_qmlManager->sceneType() == MonitorSceneRoto) {
         QMetaObject::invokeMethod(root, "updatePoints", Q_ARG(QVariant, types), Q_ARG(QVariant, list));
     }
-    if (!r.isEmpty()) {
-        if (isPlaying()) {
-            // Don't refresh rect if we are moving it
-            QMetaObject::invokeMethod(root, "updateEffectRect", Q_ARG(QRect, r));
-        } else {
-            root->setProperty("framesize", r);
-        }
+}
+
+void Monitor::setUpEffectGeometry(const QRect &r, const QVariantList &list, const QVariantList &types, const QVariantList &keyframes, const QRect &box)
+{
+    QQuickItem *root = m_glMonitor->rootObject();
+    if (!root) {
+        return;
     }
+    setUpEffectGeometry(list, types, keyframes, box);
+    root->setProperty("framesize", r);
 }
 
 void Monitor::setEffectSceneProperty(const QString &name, const QVariant &value)

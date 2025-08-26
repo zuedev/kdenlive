@@ -22,9 +22,7 @@ RenderJob::RenderJob(const QString &render, const QString &scenelist, const QStr
     , m_scenelist(scenelist)
     , m_dest(target)
     , m_progress(0)
-    , m_prog(render)
     , m_kdenlivesocket(new QLocalSocket(this))
-    , m_logfile(m_dest + QStringLiteral(".log"))
     , m_erase(debugMode == false && (scenelist.startsWith(QDir::tempPath()) || scenelist.startsWith(QStringLiteral("xml:%1").arg(QDir::tempPath()))))
     , m_seconds(0)
     , m_frame(0)
@@ -36,6 +34,14 @@ RenderJob::RenderJob(const QString &render, const QString &scenelist, const QStr
     , m_debugMode(debugMode)
     , m_renderProcess(&m_looper)
 {
+    if (target == QLatin1String("/dev/null") || target == QLatin1String("NUL")) {
+        m_logfile.setFileName(QDir::temp().absoluteFilePath("render.log"));
+    } else {
+        m_logfile.setFileName(m_dest + QStringLiteral(".log"));
+    }
+    QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
+    m_renderProcess.setProgram(render);
+    m_renderProcess.setProcessEnvironment(env);
     m_renderProcess.setReadChannel(QProcess::StandardError);
     connect(&m_renderProcess, &QProcess::finished, this, &RenderJob::slotIsOver);
 
@@ -236,8 +242,9 @@ void RenderJob::start()
     }
     // Because of the logging, we connect to stderr in all cases.
     connect(&m_renderProcess, &QProcess::readyReadStandardError, this, &RenderJob::receivedStderr);
-    m_logstream << "Started render process: " << m_prog << ' ' << m_args.join(QLatin1Char(' ')) << "\n";
-    m_renderProcess.start(m_prog, m_args);
+    m_logstream << "Started render process: " << m_renderProcess.program() << ' ' << m_args.join(QLatin1Char(' ')) << "\n";
+    m_renderProcess.setArguments(m_args);
+    m_renderProcess.start();
     if (m_debugMode) {
         m_logstream << "Using MLT REPOSITORY: " << qgetenv("MLT_REPOSITORY") << "\n";
         m_logstream << "Using MLT DATA: " << qgetenv("MLT_DATA") << "\n";
@@ -283,7 +290,7 @@ void RenderJob::slotIsOver(int exitCode, QProcess::ExitStatus status)
             int error = -1;
             QString errorMessage;
             bool fileFound = false;
-            if (QFile::exists(m_dest)) {
+            if (QFile::exists(m_dest) || m_dest == QLatin1String("/dev/null") || m_dest == QLatin1String("NUL")) {
                 if (!m_debugMode) {
                     m_logfile.remove();
                 }

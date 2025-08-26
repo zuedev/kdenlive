@@ -6,6 +6,7 @@
 import QtQuick 2.15
 
 import org.kde.kdenlive as K
+import "SnappingLogic.js" as SnappingLogic
 
 Item {
     id: root
@@ -64,11 +65,7 @@ Item {
         if (!K.KdenliveSettings.showMonitorGrid) {
             return position
         }
-        var deltax = Math.round(position.x / root.scalex)
-        var deltay = Math.round(position.y / root.scaley)
-        deltax = Math.round(deltax / K.KdenliveSettings.monitorGridH) * K.KdenliveSettings.monitorGridH
-        deltay = Math.round(deltay / K.KdenliveSettings.monitorGridV) * K.KdenliveSettings.monitorGridV
-        return Qt.point(deltax * root.scalex, deltay * root.scaley)
+        return SnappingLogic.getSnappedPoint(position, K.KdenliveSettings.monitorGridH, K.KdenliveSettings.monitorGridV)
     }
 
     function updateClickCapture() {
@@ -256,9 +253,10 @@ Item {
             if (root.iskeyframe == false) return;
             if (pressed && root.requestedKeyFrame >= 0) {
                 var mousePos = Qt.point(mouseX - frame.x, mouseY - frame.y)
-                var adjustedMouse = getSnappedPos(mousePos)
-                root.centerPoints[root.requestedKeyFrame].x = adjustedMouse.x / root.scalex;
-                root.centerPoints[root.requestedKeyFrame].y = adjustedMouse.y / root.scaley;
+                var logicalMousePos = Qt.point(mousePos.x / root.scalex, mousePos.y / root.scaley)
+                var adjustedMouse = getSnappedPos(logicalMousePos)
+                root.centerPoints[root.requestedKeyFrame].x = adjustedMouse.x;
+                root.centerPoints[root.requestedKeyFrame].y = adjustedMouse.y;
                 canvas.requestPaint()
                 root.effectPolygonChanged()
             } else {

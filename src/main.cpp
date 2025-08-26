@@ -14,6 +14,7 @@ SPDX-License-Identifier: GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
 #include "dialogs/wizard.h"
 #include "kdenlive_debug.h"
 #include "kdenlivesettings.h"
+#include "lib/localeHandling.h"
 #include "mainwindow.h"
 #include "render/renderrequest.h"
 #include <config-kdenlive.h>
@@ -191,6 +192,25 @@ int main(int argc, char *argv[])
 #ifdef USE_DRMINGW
     ExcHndlInit();
 #endif
+
+#ifdef Q_OS_MAC
+    // Launcher and Spotlight on macOS are not setting this environment
+    // variable needed by setlocale() as used by MLT.
+    if (QProcessEnvironment::systemEnvironment().value(MLT_LC_NAME).isEmpty()) {
+        qputenv(MLT_LC_NAME, QLocale().name().toUtf8());
+
+        QLocale localeByName(QLocale(QLocale().language(), QLocale().script(), QLocale().territory()));
+        if (QLocale().decimalPoint() != localeByName.decimalPoint()) {
+            // If region's numeric format does not match the language's, then we run
+            // into problems because we told MLT and libc to use a different numeric
+            // locale than actually in use by Qt because it is unable to give numeric
+            // locale as a set of ISO-639 codes.
+            QLocale::setDefault(localeByName);
+            qputenv("LANG", QLocale().name().toUtf8());
+        }
+    }
+#endif
+
     // Force QDomDocument to use a deterministic XML attribute order
     QHashSeed::setDeterministicGlobalSeed();
 
@@ -306,7 +326,9 @@ int main(int argc, char *argv[])
 
     // Set application data
     KAboutData::setApplicationData(aboutData);
+#ifndef Q_OS_MACOS // skip this on macOS to have proper mime-type icon visible
     app.setWindowIcon(QIcon(QStringLiteral(":/pics/kdenlive.png")));
+#endif
 
     app.setAttribute(Qt::AA_DontCreateNativeWidgetSiblings, true);
 
