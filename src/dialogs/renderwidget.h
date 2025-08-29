@@ -216,6 +216,8 @@ private:
     RenderJobItem *createRenderJob(const RenderRequest::RenderJob &job);
     /** Returns the first starting job */
     RenderJobItem *startingJob();
+    /** @brief Check if project contains frei0r effects that are not thread-safe. */
+    bool projectContainsFrei0rEffects() const;
 
 Q_SIGNALS:
     void abortProcess(const QString &url);

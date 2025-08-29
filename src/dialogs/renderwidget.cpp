@@ -1368,6 +1368,21 @@ void RenderWidget::refreshParams()
     if (!m_view.processing_box->isChecked() || !m_view.processing_box->isEnabled()) {
         threadCount = 1;
     }
+    
+    // Check if project contains frei0r effects and disable parallel processing to avoid crashes
+    // frei0r effects are not thread-safe and can cause vector out-of-bounds errors and memory corruption
+    if (threadCount > 1 && projectContainsFrei0rEffects()) {
+        threadCount = 1;
+        // Optionally show a warning to the user
+        static bool frei0rWarningShown = false;
+        if (!frei0rWarningShown) {
+            errorMessage(PresetWarning, 
+                i18n("Parallel processing has been disabled due to frei0r effects in your project. "
+                     "frei0r effects are not thread-safe and can cause rendering crashes when parallel processing is enabled."));
+            frei0rWarningShown = true;
+        }
+    }
+    
     m_params.insert(QStringLiteral("real_time"), QString::number(-threadCount));
 
     // Adjust encoding speed
@@ -2385,4 +2400,74 @@ void RenderWidget::updatePowerManagement()
 bool RenderWidget::isRendering() const
 {
     return m_renderStatus == Rendering;
+}
+
+bool RenderWidget::projectContainsFrei0rEffects() const
+{
+    // Check if the current project contains any frei0r effects
+    // frei0r effects are not thread-safe and can cause crashes when parallel processing is enabled
+    
+    // Get the current project's document
+    KdenliveDoc *doc = pCore->currentDoc();
+    if (!doc) {
+        return false;
+    }
+    
+    // Generate project XML to search for frei0r effects
+    auto projectContent = pCore->projectManager()->projectSceneList(
+        doc->url().adjusted(QUrl::RemoveFilename | QUrl::StripTrailingSlash).toLocalFile());
+    
+    QString xmlContent = projectContent.first;
+    if (!projectContent.second.isEmpty()) {
+        // If the content is in a file, read it
+        QFile file(projectContent.second);
+        if (file.open(QIODevice::ReadOnly)) {
+            xmlContent = QString::fromUtf8(file.readAll());
+            file.close();
+        }
+    }
+    
+    // Search for frei0r effect references in the XML
+    // This includes both "frei0r." prefixed effects and some common frei0r effect names
+    static const QStringList frei0rPatterns = {
+        QStringLiteral("frei0r."),
+        QStringLiteral("cairoblend"),
+        QStringLiteral("alphagrad"),
+        QStringLiteral("alphaspot"),
+        QStringLiteral("blend"),
+        QStringLiteral("brightness"),
+        QStringLiteral("burn"),
+        QStringLiteral("color_distance"),
+        QStringLiteral("contrast0r"),
+        QStringLiteral("curves"),
+        QStringLiteral("delay0r"),
+        QStringLiteral("distort0r"),
+        QStringLiteral("glow"),
+        QStringLiteral("hueshift0r"),
+        QStringLiteral("invert0r"),
+        QStringLiteral("levels"),
+        QStringLiteral("luminance"),
+        QStringLiteral("multiply"),
+        QStringLiteral("nosync0r"),
+        QStringLiteral("pixeliz0r"),
+        QStringLiteral("saturat0r"),
+        QStringLiteral("scanline0r"),
+        QStringLiteral("sobel"),
+        QStringLiteral("squareblur"),
+        QStringLiteral("tehroxx0r"),
+        QStringLiteral("threshold0r"),
+        QStringLiteral("tint0r"),
+        QStringLiteral("twocolor0r"),
+        QStringLiteral("vertigo"),
+        QStringLiteral("vignette")
+    };
+    
+    for (const QString &pattern : frei0rPatterns) {
+        if (xmlContent.contains(pattern, Qt::CaseInsensitive)) {
+            qDebug() << "Found frei0r effect pattern:" << pattern;
+            return true;
+        }
+    }
+    
+    return false;
 }
